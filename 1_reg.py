@@ -96,6 +96,21 @@ def node_forward(x0, t, params):
     return solution.ys
 
 
+def trapezoid(f, h):
+    return h * (jnp.sum(f[1:-1]) + (f[0] + f[-1]) / 2.0)
+
+
+def line_integral_loss(params, t, x, x_dot):
+    h = t[1] - t[0]
+    f = jax.vmap(model_forward, in_axes=(1, None), out_axes=1)(x[0:-1, :, :], params)
+    # f_norm = jnp.linalg.norm(f, ord=2, axis=2, keepdims=True)
+    # x_dot_norm = jnp.linalg.norm(x_dot, ord=2, axis=2, keepdims=True)
+    # ff = jnp.linalg.vecdot(f / f_norm, x_dot / x_dot_norm, axis=2)
+    ff = jnp.linalg.vecdot(f, x_dot, axis=2)
+    losses = jax.vmap(trapezoid, in_axes=(1, None))(ff, h)
+    return jnp.mean(-losses) / (t[-1] - t[0])
+
+
 def loss(x_true, x_pred):
     return jnp.mean((x_true - x_pred)**2)
 
@@ -107,13 +122,15 @@ def step(params, t, x):
 
 
 @jax.value_and_grad
-def train_step(params, t, x):
-    return step(params, t, x)
+def train_step(params, t, x, x_dot, beta):
+    loss_value = step(params, t, x)
+    loss_value += beta * line_integral_loss(params, t, x, x_dot)
+    return loss_value
 
 
 @partial(jax.jit, static_argnums=2)
-def train(params, opt_state, optimizer, t, x):
-    loss_value, loss_grads = train_step(params, t, x)
+def train(params, opt_state, optimizer, t, x, x_dot, beta):
+    loss_value, loss_grads = train_step(params, t, x, x_dot, beta)
     updates, opt_state = optimizer.update(loss_grads, opt_state, params)
     params = optax.apply_updates(params, updates)
     return loss_value, params, opt_state
@@ -138,12 +155,12 @@ def main():
 
     T0 = 0.0
     T1 = 1.0
-    h = 0.1
+    h = 0.01
     t = jnp.arange(T0, T1, h)
 
     key, subkey = jax.random.split(key)
-    data_points = 100
-    x0 = jax.random.uniform(key, shape=(data_points, 2), minval=-4.0, maxval=4.0)
+    data_points = 10
+    x0 = jax.random.uniform(key, shape=(data_points, 2), minval=-10.0, maxval=10.0)
 
     x_data = generate_data(function, args, t, x0)
 
@@ -152,21 +169,24 @@ def main():
     x_val = x_data[:, train_size:, :]
 
     key, subkey = jax.random.split(key)
-    sensor_noise = jax.random.normal(key, shape=x_train.shape) * 1e-3
+    sensor_noise = jax.random.normal(subkey, shape=x_train.shape) * 1e-3
     x_train += sensor_noise
     
     key, subkey = jax.random.split(key)
-    model_def = [2, 20, 20, 2]
+    model_def = [2, 20, 2]
     params = model_init(model_def, subkey)
 
-    optimizer = optax.adamw(learning_rate=1e-3)
+    optimizer = optax.adamw(learning_rate=3e-4)
     opt_state = optimizer.init(params)
 
-    epochs = 500
+    epochs = 10000
     train_losses = np.zeros((epochs,))
     val_losses = np.zeros((epochs,))
 
-    batch_size = 10
+    batch_size = 5
+    train_iterations = train_size // batch_size
+
+    beta = 1e-3
 
     for epoch in range(epochs):
         try:
@@ -174,23 +194,51 @@ def main():
             x_train = jax.random.permutation(subkey, x_train, axis=1)
 
             train_loss_mean = 0.0
-            for i in range(train_size // batch_size):
+            for i in range(train_iterations):
                 x_batch = x_train[:, i * (batch_size):(i + 1) * batch_size, :]
-                train_loss, params, opt_state = train(params, opt_state, optimizer, t, x_batch)
-                train_loss_mean += train_loss
-            train_loss_mean /= train_size // batch_size
+                x_dot_batch = (x_batch[1:, :, :] - x_batch[:-1, :, :]) / h
+
+                train_loss, params, opt_state = train(params, opt_state, optimizer, t, x_batch, x_dot_batch, beta)
+                train_loss_mean += train_loss.item()
+            train_loss_mean /= train_iterations
 
             val_loss = validate(params, t, x_val)
 
             train_losses[epoch] = train_loss_mean
             val_losses[epoch] = val_loss
 
-            print(f"Epoch: {epoch + 1:3d}, Train Loss: {train_loss_mean.item():.4f}, Val Loss: {val_loss.item():.4f}")
+            print(f"Epoch: {epoch + 1:3d}, Train Loss: {train_loss_mean:.4f}, Val Loss: {val_loss.item():.4f}")
         except KeyboardInterrupt:
             break
 
-    plot_vector_field(lambda x: model_forward(x, params))
+    x_train_dot = (x_train[1:, :, :] - x_train[:-1, :, :]) / h
+    train_line_integral = line_integral_loss(params, t, x_train, x_train_dot)
 
+    x_val_dot = (x_val[1:, :, :] - x_val[:-1, :, :]) / h
+    val_line_integral = line_integral_loss(params, t, x_val, x_val_dot)
+    print()
+    print(f"Train line integral: {-train_line_integral:.4f}")
+    print(f"Val line integral: {-val_line_integral:.4f}")
+
+    train_trajectory_loss = validate(params, t, x_train)
+    val_trajectory_loss = validate(params, t, x_val)
+    print()
+    print(f"Train trajectory loss: {train_trajectory_loss:.4f}")
+    print(f"Val trajectory loss: {val_trajectory_loss:.4f}")
+
+
+    X = jnp.arange(-10, 10, 0.1)
+    X1, X2 = jnp.meshgrid(X, X, indexing="xy")
+    XX = jnp.stack((X1.flatten(), X2.flatten()), axis=1)
+
+    YY_true = mass_spring_damper(None, XX, args)
+    YY_pred = model_forward(XX, params)
+
+    vector_field_simularity = loss(YY_true, YY_pred)
+    print()
+    print(f"Vector field similarity: {vector_field_simularity:.4f}")
+
+    plot_vector_field(lambda x: model_forward(x, params))
     plot_losses(train_losses, val_losses)
 
 
