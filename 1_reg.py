@@ -1,11 +1,12 @@
 import random
-import numpy as np
-import matplotlib.pyplot as plt
+from functools import partial
+
+import diffrax
 import jax
 import jax.numpy as jnp
-from functools import partial
+import matplotlib.pyplot as plt
+import numpy as np
 import optax
-import diffrax
 
 
 def mass_spring_damper(t, x, args):
@@ -13,7 +14,7 @@ def mass_spring_damper(t, x, args):
     x1 = x[:, 0]
     x2 = x[:, 1]
     dx1 = x2
-    dx2 = - k / m * x1 - d / m * x2
+    dx2 = -k / m * x1 - d / m * x2
     return jnp.stack((dx1, dx2), axis=1)
 
 
@@ -112,7 +113,7 @@ def line_integral_loss(params, t, x, x_dot):
 
 
 def loss(x_true, x_pred):
-    return jnp.mean((x_true - x_pred)**2)
+    return jnp.mean((x_true - x_pred) ** 2)
 
 
 def step(params, t, x):
@@ -171,7 +172,7 @@ def main():
     key, subkey = jax.random.split(key)
     sensor_noise = jax.random.normal(subkey, shape=x_train.shape) * 1e-3
     x_train += sensor_noise
-    
+
     key, subkey = jax.random.split(key)
     model_def = [2, 20, 2]
     params = model_init(model_def, subkey)
@@ -195,7 +196,7 @@ def main():
 
             train_loss_mean = 0.0
             for i in range(train_iterations):
-                x_batch = x_train[:, i * (batch_size):(i + 1) * batch_size, :]
+                x_batch = x_train[:, i * (batch_size) : (i + 1) * batch_size, :]
                 x_dot_batch = (x_batch[1:, :, :] - x_batch[:-1, :, :]) / h
 
                 train_loss, params, opt_state = train(params, opt_state, optimizer, t, x_batch, x_dot_batch, beta)
@@ -225,7 +226,6 @@ def main():
     print()
     print(f"Train trajectory loss: {train_trajectory_loss:.4f}")
     print(f"Val trajectory loss: {val_trajectory_loss:.4f}")
-
 
     X = jnp.arange(-10, 10, 0.1)
     X1, X2 = jnp.meshgrid(X, X, indexing="xy")

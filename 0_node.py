@@ -1,11 +1,12 @@
 import random
-import numpy as np
-import matplotlib.pyplot as plt
+from functools import partial
+
+import diffrax
 import jax
 import jax.numpy as jnp
-from functools import partial
+import matplotlib.pyplot as plt
+import numpy as np
 import optax
-import diffrax
 
 
 def mass_spring_damper(t, x, args):
@@ -13,7 +14,7 @@ def mass_spring_damper(t, x, args):
     x1 = x[:, 0]
     x2 = x[:, 1]
     dx1 = x2
-    dx2 = - k / m * x1 - d / m * x2
+    dx2 = -k / m * x1 - d / m * x2
     return jnp.stack((dx1, dx2), axis=1)
 
 
@@ -97,7 +98,7 @@ def node_forward(x0, t, params):
 
 
 def loss(x_true, x_pred):
-    return jnp.mean((x_true - x_pred)**2)
+    return jnp.mean((x_true - x_pred) ** 2)
 
 
 def step(params, t, x):
@@ -154,7 +155,7 @@ def main():
     key, subkey = jax.random.split(key)
     sensor_noise = jax.random.normal(subkey, shape=x_train.shape) * 1e-3
     x_train += sensor_noise
-    
+
     key, subkey = jax.random.split(key)
     model_def = [2, 20, 20, 2]
     params = model_init(model_def, subkey)
@@ -167,6 +168,7 @@ def main():
     val_losses = np.zeros((epochs,))
 
     batch_size = 10
+    train_iterations = train_size // batch_size
 
     for epoch in range(epochs):
         try:
@@ -174,11 +176,11 @@ def main():
             x_train = jax.random.permutation(subkey, x_train, axis=1)
 
             train_loss_mean = 0.0
-            for i in range(train_size // batch_size):
-                x_batch = x_train[:, i * (batch_size):(i + 1) * batch_size, :]
+            for i in range(train_iterations):
+                x_batch = x_train[:, i * (batch_size) : (i + 1) * batch_size, :]
                 train_loss, params, opt_state = train(params, opt_state, optimizer, t, x_batch)
                 train_loss_mean += train_loss
-            train_loss_mean /= train_size / batch_size
+            train_loss_mean /= train_iterations
 
             val_loss = validate(params, t, x_val)
 
