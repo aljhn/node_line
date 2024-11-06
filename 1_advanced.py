@@ -9,12 +9,13 @@ import numpy as np
 import optax
 
 
-def mass_spring_damper(t, x, args):
-    m, d, k = args
+def pendulum(t, x, args):
+    l, g = args
+    a = l / g
     x1 = x[:, 0]
     x2 = x[:, 1]
     dx1 = x2
-    dx2 = -k / m * x1 - d / m * x2
+    dx2 = a * jnp.sin(x1)
     return jnp.stack((dx1, dx2), axis=1)
 
 
@@ -131,10 +132,9 @@ def step(params, t, x):
 @jax.value_and_grad
 def train_step(params, t, x, x_dot, beta):
     loss_value = step(params, t, x)
-    #loss_value += beta * line_integral_loss(params, t, x, x_dot)
+    loss_value += beta * line_integral_loss(params, t, x, x_dot)
+    # loss_value = line_integral_loss(params, t, x, x_dot)
     return loss_value
-
-#Epoch: 2000, Train Loss: -0.0028, Val MSE Loss: 0.6525, Val LL Loss: -0.9213
 
 
 @partial(jax.jit, static_argnums=2)
@@ -158,11 +158,10 @@ def main():
     np.random.seed(seed)
     key = jax.random.PRNGKey(seed)
 
-    function = mass_spring_damper
-    m = 1.0
-    d = 1.0
-    k = 1.0
-    args = m, d, k
+    function = pendulum
+    l = 10.0
+    g = 1.0
+    args = l, g
 
     T0 = 0.0
     T1 = 1.0
@@ -170,7 +169,7 @@ def main():
     t = jnp.arange(T0, T1, h)
 
     key, subkey = jax.random.split(key)
-    data_points = 100
+    data_points = 1000
     x_range = 10.0
     x0 = jax.random.uniform(key, shape=(data_points, 2), minval=-x_range, maxval=x_range)
 
@@ -186,22 +185,22 @@ def main():
     sensor_noise = jax.random.normal(subkey, shape=x_train.shape) * 1e-3
     x_train += sensor_noise
 
+    batch_size = 5
+    train_iterations = train_size // batch_size
+
     key, subkey = jax.random.split(key)
-    model_def = [2, 50, 2]
+    model_def = [2, 50, 50, 50, 2]
     params = model_init(model_def, subkey)
 
     optimizer = optax.adamw(learning_rate=1e-3)
     opt_state = optimizer.init(params)
 
-    epochs = 2000
+    epochs = 400
     train_losses = np.zeros((epochs,))
 
     validation_frequency = 10
     val_mse_losses = np.zeros((epochs // validation_frequency,))
     val_ll_losses = np.zeros((epochs // validation_frequency,))
-
-    batch_size = 5
-    train_iterations = train_size // batch_size
 
     beta = 1e+2
 
@@ -238,7 +237,7 @@ def main():
     X1, X2 = jnp.meshgrid(X, X, indexing="xy")
     XX = jnp.stack((X1.flatten(), X2.flatten()), axis=1)
 
-    YY_true = mass_spring_damper(None, XX, args)
+    YY_true = pendulum(None, XX, args)
     YY_pred = model_forward(XX, params)
 
     vector_field_simularity = loss(YY_true, YY_pred)
@@ -246,7 +245,7 @@ def main():
     print(f"Vector field similarity: {vector_field_simularity:.4f}")
 
     plot_vector_field(lambda x: model_forward(x, params))
-    plot_losses(train_losses, val_mse_losses, val_ll_losses)
+    # plot_losses(train_losses, val_mse_losses, val_ll_losses)
 
 
 if __name__ == "__main__":
