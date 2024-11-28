@@ -217,6 +217,7 @@ def main():
     beta1 = 1e2
 
     for epoch in range(epochs):
+        break
         try:
             key, subkey = jax.random.split(key)
             x_train = jax.random.permutation(subkey, x_train, axis=1)
@@ -274,9 +275,38 @@ def main():
     print(f"Vector field similarity 1: {vector_field_simularity1:.4f}")
 
     # plot_vector_field(lambda x: pendulum(None, x, args))
-    plot_vector_field(lambda x: model_forward(x, params0))
-    plot_vector_field(lambda x: model_forward(x, params1))
-    # plot_losses(train_losses, val_mse_losses, val_ll_losses)
+    # plot_vector_field(lambda x: model_forward(x, params0))
+    # plot_vector_field(lambda x: model_forward(x, params1))
+    # plot_losses(train_losses, val_mse_losses, val_ll_losses) 
+
+    width=10
+    step=0.1
+
+    X = jnp.arange(-width, width, step)
+    X1, X2 = jnp.meshgrid(X, X, indexing="xy")
+    XX = jnp.stack((X1.flatten(), X2.flatten()), axis=1)
+
+    YY = pendulum(None, XX, args)
+
+    Y1 = YY[:, 0].reshape(X1.shape)
+    Y2 = YY[:, 1].reshape(X2.shape)
+
+    X1 = np.asarray(X1)
+    X2 = np.asarray(X2)
+    Y1 = np.asarray(Y1)
+    Y2 = np.asarray(Y2)
+
+    plt.figure()
+    sns.set_theme(style="darkgrid")
+    plt.streamplot(X1, X2, Y1, Y2, density=1, linewidth=None, color="#A23BEC")
+    plt.plot(x_val[:, 0, 0], x_val[:, 0, 1], linewidth=3)
+    plt.plot(x_val[:, 1, 0], x_val[:, 1, 1], linewidth=3)
+    plt.plot(x_val[:, 2, 0], x_val[:, 2, 1], linewidth=3)
+    plt.plot(x_val[:, 3, 0], x_val[:, 3, 1], linewidth=3)
+    plt.plot(x_val[:, 4, 0], x_val[:, 4, 1], linewidth=3)
+    plt.plot(x_val[:, 5, 0], x_val[:, 5, 1], linewidth=3)
+    plt.tight_layout()
+    plt.show()
 
 
 if __name__ == "__main__":
