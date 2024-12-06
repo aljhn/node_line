@@ -136,7 +136,7 @@ def node_forward(x0, t, params):
     h = t[1] - t[0]
     saveat = diffrax.SaveAt(ts=t)
     term = diffrax.ODETerm(lambda t, x, args: model_forward(x, args))
-    solver = diffrax.Dopri5()
+    solver = diffrax.Tsit5()
     adjoint = diffrax.BacksolveAdjoint(solver=solver)
     args = params
     solution = diffrax.diffeqsolve(term, solver, t0=T0, t1=T1, dt0=h, y0=x0, saveat=saveat, adjoint=adjoint, args=args)
@@ -172,8 +172,8 @@ def step(params, t, x):
 
 @jax.value_and_grad
 def train_step(params, t, x, x_dot, beta):
-    # loss_value = step(params, t, x)
-    loss_value = beta * line_integral_loss(params, t, x, x_dot)
+    loss_value = step(params, t, x)
+    loss_value += beta * line_integral_loss(params, t, x, x_dot)
     return loss_value
 
 
@@ -185,47 +185,52 @@ def train(params, opt_state, optimizer, t, x, x_dot, beta):
     return loss_value, params, opt_state
 
 
-def line_integral_gradients(params, x, tangents):
+def model_gradients(params, x, tangents):
     _, vjpfun = jax.vjp(lambda p: model_forward(x, p), params)
     gradients = vjpfun(tangents)
     return gradients
 
 
-def construct_normalization_jacobian(f, f_norm):
-    normalization_jacobian = np.eye(f.shape[0]) / f_norm - jnp.outer(f, f) / (f_norm**3)
-    return normalization_jacobian
+def construct_normalization_matrix(f, f_norm):
+    normalization_matrix = np.eye(f.shape[0]) / f_norm - jnp.outer(f, f) / (f_norm**3)
+    return normalization_matrix
 
 
 def line_integral_gradient_tangents(params, opt_state, optimizer, t, x, x_dot):
-    f = jax.vmap(model_forward, in_axes=(0, None), out_axes=0)(x[0:-1, :], params)
-    f_norm = jnp.linalg.norm(f, ord=2, axis=1, keepdims=True)
-    normalization_jacobian = jax.vmap(construct_normalization_jacobian, in_axes=(0, 0), out_axes=0)(f, f_norm)
-
     x_dot_norm = jnp.linalg.norm(x_dot, ord=2, axis=1, keepdims=True)
     x_dot_normalized = x_dot / x_dot_norm
-    tangents = jax.vmap(jnp.matmul, in_axes=(0, 0), out_axes=0)(x_dot_normalized, normalization_jacobian)
 
-    gradients = jax.vmap(line_integral_gradients, in_axes=(None, 0, 0), out_axes=0)(params, x[0:-1, :], tangents)
+    f = jax.vmap(model_forward, in_axes=(0, None), out_axes=0)(x[0:-1, :], params)
+    f_norm = jnp.linalg.norm(f, ord=2, axis=1, keepdims=True)
+    normalization_matrix = jax.vmap(construct_normalization_matrix, in_axes=(0, 0), out_axes=0)(f, f_norm)
+
+    tangents = jax.vmap(jnp.matmul, in_axes=(0, 0), out_axes=0)(x_dot_normalized, normalization_matrix)
+
+    gradients = jax.vmap(model_gradients, in_axes=(None, 0, 0), out_axes=0)(params, x[0:-1, :], tangents)
     return gradients
+
+
+def trapezoid2(f, h):
+    return h * (jnp.sum(f[1:-1, :], axis=0) + (f[0, :] + f[-1, :]) / 2.0)
 
 
 @partial(jax.jit, static_argnums=2)
 def train_line_integral_only(params, opt_state, optimizer, t, x, x_dot):
-    loss_value = line_integral_loss(params, t, x, x_dot)
+    # loss_value = line_integral_loss(params, t, x, x_dot)
+    #
+    # h = t[1] - t[0]
+    # T = t[-1] - t[0]
+    #
+    # gradients = jax.vmap(line_integral_gradient_tangents, in_axes=(None, None, None, None, 1, 1), out_axes=1)(params, opt_state, optimizer, t, x, x_dot)
+    # gradients = gradients[0]
+    # for i in range(len(gradients)):
+    #     gradients[i]["bias"] = jnp.mean(gradients[i]["bias"], axis=1)
+    #     gradients[i]["bias"] = -trapezoid2(gradients[i]["bias"], h) / T
+    #
+    #     gradients[i]["weights"] = jnp.mean(gradients[i]["weights"], axis=1)
+    #     gradients[i]["weights"] = -trapezoid2(gradients[i]["weights"], h) / T
 
-    h = t[1] - t[0]
-    T = t[-1] - t[0]
-
-    gradients = jax.vmap(line_integral_gradient_tangents, in_axes=(None, None, None, None, 1, 1), out_axes=1)(params, opt_state, optimizer, t, x, x_dot)
-    gradients = gradients[0]
-    for i in range(len(gradients)):
-        gradients[i]["bias"] = jnp.mean(gradients[i]["bias"], axis=1)
-        gradients[i]["bias"] = -trapezoid(gradients[i]["bias"], h) / T
-
-        gradients[i]["weights"] = jnp.mean(gradients[i]["weights"], axis=1)
-        gradients[i]["weights"] = -trapezoid(gradients[i]["weights"], h) / T
-
-    # loss_value, gradients = jax.value_and_grad(line_integral_loss)(params, t, x, x_dot)
+    loss_value, gradients = jax.value_and_grad(line_integral_loss)(params, t, x, x_dot)
 
     updates, opt_state = optimizer.update(gradients, opt_state, params)
     params = optax.apply_updates(params, updates)
@@ -245,33 +250,41 @@ def main():
     np.random.seed(seed)
     key = jax.random.PRNGKey(seed)
 
-    # function = double_pendulum
-    # dim = 4
-    # m1 = 1.0
-    # m2 = 1.0
-    # l1 = 1.0
-    # l2 = 1.0
-    # g = 9.81
-    # args = m1, m2, l1, l2, g
+    function = double_pendulum
+    dim = 4
+    m1 = 1.0
+    m2 = 1.0
+    l1 = 1.0
+    l2 = 1.0
+    g = 9.81
+    args = m1, m2, l1, l2, g
 
-    function = mass_spring_damper
-    dim = 2
-    m = 1.0
-    d = 1.0
-    k = 1.0
-    args = m, d, k
+    # function = mass_spring_damper
+    # dim = 2
+    # m = 1.0
+    # d = 1.0
+    # k = 1.0
+    # args = m, d, k
 
     T0 = 0.0
     T1 = 1.0
     h = 0.01
     t = jnp.arange(T0, T1, h)
 
-    key, subkey = jax.random.split(key)
-    train_trajectories = 1000
+    train_trajectories = 400
     val_trajectories = 100
     data_trajectories = train_trajectories + val_trajectories
-    x_range = 10.0
-    x0 = jax.random.uniform(key, shape=(data_trajectories, dim), minval=-x_range, maxval=x_range)
+    #x_range = 10.0
+    #key, subkey = jax.random.split(key)
+    #x0 = jax.random.uniform(key, shape=(data_trajectories, dim), minval=-x_range, maxval=x_range)
+
+    key, subkey0, subkey1, subkey2, subkey3 = jax.random.split(key, 5)
+    x0_0 = jax.random.uniform(subkey0, shape=data_trajectories, minval=-3.0, maxval=3.0)
+    x0_1 = x0_0 + jax.random.uniform(subkey1, shape=data_trajectories, minval=-0.5, maxval=0.5)
+    x0_2 = jax.random.uniform(subkey2, shape=data_trajectories, minval=-2.0, maxval=2.0)
+    x0_3 = jax.random.uniform(subkey3, shape=data_trajectories, minval=-2.0, maxval=2.0)
+    x0 = jnp.stack((x0_0, x0_1, x0_2, x0_3), axis=1)
+    # x0 = jnp.stack((x0_0, x0_1), axis=1)
 
     x_data = generate_data(function, args, t, x0)
 
@@ -284,17 +297,17 @@ def main():
     sensor_noise = jax.random.normal(subkey, shape=x_train.shape) * 1e-3
     x_train += sensor_noise
 
-    batch_size = 50
+    batch_size = 100
     train_iterations = train_trajectories // batch_size
 
     key, subkey = jax.random.split(key)
-    model_def = [dim, 100, 100, 100, dim]
+    model_def = [dim, 100, 100, dim]
     params0 = model_init(model_def, subkey)
 
     key, subkey = jax.random.split(key)
     params1 = model_init(model_def, subkey)
 
-    initial_learning_rate = 1e-2
+    initial_learning_rate = 1e-3
     # learning_rate = optax.schedules.exponential_decay(initial_learning_rate, 10, 0.99)
     learning_rate = optax.schedules.constant_schedule(initial_learning_rate)
     optimizer0 = optax.adamw(learning_rate=learning_rate)
@@ -303,15 +316,15 @@ def main():
     optimizer1 = optax.adamw(learning_rate=learning_rate)
     opt_state1 = optimizer1.init(params1)
 
-    epochs = 1000
+    epochs = 200
     train_losses = np.zeros((epochs, 2))
 
-    validation_frequency = 10
+    validation_frequency = 1
     val_mse_losses = np.zeros((epochs // validation_frequency, 2))
     val_ll_losses = np.zeros((epochs // validation_frequency, 2))
 
     beta0 = 0.0
-    beta1 = 1.0
+    beta1 = 1e3
 
     for epoch in range(epochs):
         try:
@@ -324,10 +337,10 @@ def main():
                 x_batch = x_train[:, i * (batch_size) : (i + 1) * batch_size, :]
                 x_dot_batch = (x_batch[1:, :, :] - x_batch[:-1, :, :]) / h
 
-                # train_loss0, params0, opt_state0 = train(params0, opt_state0, optimizer0, t, x_batch, x_dot_batch, beta0)
-                # train_loss_mean0 += train_loss0.item()
+                train_loss0, params0, opt_state0 = train(params0, opt_state0, optimizer0, t, x_batch, x_dot_batch, beta0)
+                train_loss_mean0 += train_loss0.item()
 
-                train_loss1, params1, opt_state1 = train_line_integral_only(params1, opt_state1, optimizer1, t, x_batch, x_dot_batch)
+                train_loss1, params1, opt_state1 = train(params1, opt_state1, optimizer1, t, x_batch, x_dot_batch, beta0)
                 train_loss_mean1 += train_loss1.item()
 
             train_loss_mean0 /= train_iterations
@@ -351,7 +364,7 @@ def main():
                 print()
 
             if (epoch + 1) % 100 == 0:
-                beta1 *= 0.5
+                beta1 *= 0.9
 
         except KeyboardInterrupt:
             break
