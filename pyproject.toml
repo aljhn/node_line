@@ -1,0 +1,7 @@
+[project]
+name = "node_vector_field_regularization"
+version = "0.1.0"
+description = "TODO: description"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
