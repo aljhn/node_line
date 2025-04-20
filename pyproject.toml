@@ -1,5 +1,5 @@
 [project]
-name = "node_vector_field_regularization"
+name = "node_line"
 version = "0.1.0"
 description = "TODO: description"
 readme = "README.md"

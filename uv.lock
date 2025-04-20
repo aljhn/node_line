@@ -323,7 +323,7 @@ wheels = [
 ]
 
 [[package]]
-name = "node-vector-field-regularization"
+name = "node-line"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
