@@ -7,4 +7,5 @@
 3. Try to pretrain on line integrals vs adding as regularization
 4. Separate models for direction and magnitude of the vector field
 5. Vary noise levels and see the effect on the overall method
-6. Use as a feature generator for classification
+6. See the effect of using irregular time intervals
+7. Use as a feature generator for classification

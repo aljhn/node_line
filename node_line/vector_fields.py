@@ -1,11 +1,47 @@
 from abc import ABC, abstractmethod
+from functools import partial
 from typing import Callable, Sequence
 
 import diffrax
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PyTree
-from plotting import plot_vector_field
+
+from node_line.plotting import plot_vector_field
+
+VectorFieldFunction = Callable[[Float, Array, Sequence[Float]], Array]
+
+
+@partial(jax.jit, static_argnums=(0, 1))
+def _generate(
+    function: VectorFieldFunction,
+    args: Sequence[Float],
+    x0: Float[Array, "batch dim"],
+    t: Float[Array, "time"],
+    dt0: Float,
+) -> Float[PyTree, "time batch dim"]:
+    T0 = t[0]
+    T1 = t[-1]
+
+    term = diffrax.ODETerm(function)
+    solver = diffrax.Tsit5()
+    saveat = diffrax.SaveAt(ts=t)
+    stepsize_controller = diffrax.PIDController(rtol=1e-4, atol=1e-6)
+    adjoint = diffrax.RecursiveCheckpointAdjoint()
+
+    solution = diffrax.diffeqsolve(
+        term,
+        solver,
+        t0=T0,
+        t1=T1,
+        dt0=dt0,
+        y0=x0,
+        args=args,
+        saveat=saveat,
+        stepsize_controller=stepsize_controller,
+        adjoint=adjoint,
+    )
+    return solution.ys
 
 
 class VectorField(ABC):
@@ -17,34 +53,18 @@ class VectorField(ABC):
         )
 
     @abstractmethod
-    def _get_function(self) -> Callable[[Float, Array, Sequence[Float]], Array]:
+    def _get_function(self) -> VectorFieldFunction:
         pass
 
     def generate(
         self, x0: Float[Array, "batch dim"], t: Float[Array, "time"], dt0: Float
     ) -> Float[PyTree, "time batch dim"]:
-        T0 = t[0]
-        T1 = t[-1]
+        return _generate(self.function, self.args, x0, t, dt0)
 
-        term = diffrax.ODETerm(self.function)
-        solver = diffrax.Tsit5()
-        saveat = diffrax.SaveAt(ts=t)
-        stepsize_controller = diffrax.PIDController(rtol=1e-4, atol=1e-6)
-        adjoint = diffrax.RecursiveCheckpointAdjoint()
-
-        solution = diffrax.diffeqsolve(
-            term,
-            solver,
-            t0=T0,
-            t1=T1,
-            dt0=dt0,
-            y0=x0,
-            args=self.args,
-            saveat=saveat,
-            stepsize_controller=stepsize_controller,
-            adjoint=adjoint,
-        )
-        return solution.ys
+    def plot(self):
+        function = lambda x: self.function(None, x, self.args)
+        filename = type(self).__name__
+        plot_vector_field(function, filename)
 
 
 class MassSpringDamper(VectorField):
@@ -52,7 +72,7 @@ class MassSpringDamper(VectorField):
     def __init__(self, m: Float, d: Float, k: Float):
         super().__init__((m, d, k))
 
-    def _get_function(self) -> Callable[[Float, Array, Sequence[Float]], Array]:
+    def _get_function(self) -> VectorFieldFunction:
         def function(t, x, args):
             m, d, k = args
             x1, x2 = x
@@ -68,7 +88,7 @@ class SinglePendulum(VectorField):
     def __init__(self, l: Float, g: Float):
         super().__init__((l, g))
 
-    def _get_function(self) -> Callable[[Float, Array, Sequence[Float]], Array]:
+    def _get_function(self) -> VectorFieldFunction:
         def function(t, x, args):
             l, g = args
             x1, x2 = x
@@ -84,7 +104,7 @@ class DoublePendulum(VectorField):
     def __init__(self, m1: Float, m2: Float, l1: Float, l2: Float, g: Float):
         super().__init__((m1, m2, l1, l2, g))
 
-    def _get_function(self) -> Callable[[Float, Array, Sequence[Float]], Array]:
+    def _get_function(self) -> VectorFieldFunction:
         def function(t, x, args):
             m1, m2, l1, l2, g = args
 
@@ -137,5 +157,3 @@ if __name__ == "__main__":
     dt0 = 0.01
     x = vector_field.generate(x0, t, dt0)
     print(x.shape)
-
-    plot_vector_field(lambda x: vector_field.function(None, x, vector_field.args))

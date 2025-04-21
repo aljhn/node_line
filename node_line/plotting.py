@@ -4,7 +4,8 @@ import numpy as np
 import seaborn as sns
 
 
-def plot_vector_field(function, width=10, step=0.1):
+def plot_vector_field(function, filename, width=10.0, step=0.1, show=True):
+    """Only works for 2-dimensional vector fields"""
     X = jnp.arange(-width, width, step)
     X1, X2 = jnp.meshgrid(X, X, indexing="xy")
     XX = jnp.stack((X1.flatten(), X2.flatten()), axis=1)
@@ -21,11 +22,13 @@ def plot_vector_field(function, width=10, step=0.1):
 
     plt.figure()
     sns.set_theme(style="darkgrid")
-    plt.streamplot(X1, X2, Y1, Y2, density=1, linewidth=None, color="#A23BEC")
+    plt.streamplot(X1, X2, Y1, Y2, density=2, linewidth=None, color="#A23BEC")
     plt.tight_layout()
     plt.xlim(-width, width)
     plt.ylim(-width, width)
-    plt.show()
+    plt.savefig(f"plots/{filename}.pdf")
+    if show:
+        plt.show()
 
 
 def plot_losses(train_losses, val_mse_losses, val_ll_losses):
