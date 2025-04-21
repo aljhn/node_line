@@ -5,6 +5,7 @@ import diffrax
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PyTree
+from plotting import plot_vector_field
 
 
 class VectorField(ABC):
@@ -136,3 +137,5 @@ if __name__ == "__main__":
     dt0 = 0.01
     x = vector_field.generate(x0, t, dt0)
     print(x.shape)
+
+    plot_vector_field(lambda x: vector_field.function(None, x, vector_field.args))

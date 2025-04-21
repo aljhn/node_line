@@ -4,6 +4,7 @@ import diffrax
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, Float, PyTree
+from plotting import plot_vector_field
 
 
 def mlp_init(layer_sizes: Sequence[int], key: Array) -> List[Dict[str, Array]]:
@@ -80,3 +81,5 @@ if __name__ == "__main__":
     dt0 = 0.01
     x = node_forward(x0, t, dt0, params)
     print(x.shape)
+
+    plot_vector_field(lambda x: mlp_forward(x, params))
