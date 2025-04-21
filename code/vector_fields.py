@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Sequence
+from typing import Callable, Sequence
 
 import diffrax
 import jax
