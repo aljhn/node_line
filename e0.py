@@ -7,7 +7,7 @@ import optax
 
 from node_line.mlp import mlp_forward, mlp_init, node_forward
 from node_line.plotting import plot_vector_field
-from node_line.vector_fields import MassSpringDamper
+from node_line.vector_fields import MassSpringDamper, SinglePendulum
 
 
 def loss(x_true, x_pred):
@@ -35,10 +35,15 @@ def main():
     key = jax.random.PRNGKey(seed)
 
     dim = 2
-    m = 1.0
-    d = 1.0
-    k = 1.0
-    system = MassSpringDamper(m, d, k)
+    # m = 1.0
+    # d = 1.0
+    # k = 1.0
+    # system = MassSpringDamper(m, d, k)
+    l = 1.0
+    g = 9.81
+    system = SinglePendulum(l, g)
+    system.plot()
+    exit()
     # if dim == 2:
     #     system.plot()
 
